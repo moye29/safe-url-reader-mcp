@@ -30,8 +30,57 @@ describe("public Xiaohongshu page parsing", () => {
         "https://sns-img.example/one.jpg",
         "https://sns-img.example/two.jpg",
       ],
+      attachments: [],
       comments: [],
     });
+  });
+
+  it("merges richer detailMap images and discovers attachment metadata", () => {
+    const html = `<script>window.__INITIAL_STATE__=${JSON.stringify({
+      noteData: {
+        data: {
+          noteData: {
+            title: "轻量数据",
+            desc: "正文",
+            user: { nickName: "作者" },
+          },
+        },
+      },
+      note: {
+        noteDetailMap: {
+          abc: {
+            note: {
+              title: "完整数据",
+              imageList: [
+                {
+                  infoList: [
+                    { imageScene: "WB_DFT", url: "https://sns-img.example/detail.jpg" },
+                  ],
+                },
+              ],
+              attachmentList: [
+                {
+                  fileName: "demo.docx",
+                  downloadUrl: "https://files.example/demo.docx",
+                  fileId: "file-1",
+                },
+              ],
+            },
+          },
+        },
+      },
+    })}</script>`;
+
+    const note = parsePublicNoteHtml(html, 0);
+    expect(note.title).toBe("轻量数据");
+    expect(note.images).toEqual(["https://sns-img.example/detail.jpg"]);
+    expect(note.attachments).toEqual([
+      {
+        name: "demo.docx",
+        url: "https://files.example/demo.docx",
+        id: "file-1",
+      },
+    ]);
   });
 
   it("supports noteDetailMap and returns at most five embedded top-level comments", () => {
