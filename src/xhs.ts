@@ -22,6 +22,21 @@ export interface XhsNote {
   comments: XhsComment[];
 }
 
+export interface XhsDebugEntry {
+  path: string;
+  key: string;
+  preview: string;
+}
+
+export interface XhsDebugResult {
+  finalUrl: string;
+  htmlLength: number;
+  stateTopLevelKeys: string[];
+  noteDataKeys: string[];
+  detailMapKeys: string[];
+  matches: XhsDebugEntry[];
+}
+
 export type Fetcher = (
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -216,16 +231,18 @@ function replaceUndefinedTokens(source: string): string {
   return result;
 }
 
-export function parsePublicNoteHtml(html: string, _commentLimit: number): XhsNote {
+function parseStateFromHtml(html: string): unknown {
   const marker = /window\.__INITIAL_STATE__\s*=\s*/.exec(html);
   if (!marker) throw new Error("页面中没有找到 __INITIAL_STATE__");
-
   const start = marker.index + marker[0].length;
   const end = html.indexOf("</script>", start);
   if (end === -1) throw new Error("__INITIAL_STATE__ 脚本不完整");
-
   const rawState = html.slice(start, end).trim().replace(/;\s*$/, "");
-  const state = JSON.parse(replaceUndefinedTokens(rawState)) as unknown;
+  return JSON.parse(replaceUndefinedTokens(rawState)) as unknown;
+}
+
+export function parsePublicNoteHtml(html: string, _commentLimit: number): XhsNote {
+  const state = parseStateFromHtml(html);
   const detailMap = record(nested(state, ["note", "noteDetailMap"]));
   const firstDetail = detailMap
     ? record(detailMap[Object.keys(detailMap)[0] ?? ""])
@@ -236,9 +253,6 @@ export function parsePublicNoteHtml(html: string, _commentLimit: number): XhsNot
   if (!note) throw new Error("公开页面中没有找到笔记数据");
 
   const user = record(primaryNote?.user) ?? record(detailNote?.user) ?? record(note.user);
-
-  // Some XHS pages expose a lightweight noteData object and a richer noteDetailMap
-  // object at the same time. Merge image sources instead of picking only one branch.
   const images = unique([
     ...imageUrlsFromList(primaryNote?.imageList),
     ...imageUrlsFromList(detailNote?.imageList),
@@ -282,11 +296,10 @@ export function parsePublicNoteHtml(html: string, _commentLimit: number): XhsNot
   };
 }
 
-export async function readXhsNote(
+async function fetchPublicHtml(
   inputUrl: string,
-  commentLimit = 0,
-  fetcher: Fetcher = (input, init) => fetch(input, init),
-): Promise<XhsNote> {
+  fetcher: Fetcher,
+): Promise<{ html: string; finalUrl: string }> {
   let currentUrl: URL;
   try {
     currentUrl = new URL(inputUrl);
@@ -318,8 +331,81 @@ export async function readXhsNote(
       throw new Error(`公开页面请求失败（HTTP ${response.status}）`);
     }
 
-    return parsePublicNoteHtml(await response.text(), commentLimit);
+    return { html: await response.text(), finalUrl: currentUrl.toString() };
   }
 
   throw new Error("短链跳转次数过多");
+}
+
+export async function readXhsNote(
+  inputUrl: string,
+  commentLimit = 0,
+  fetcher: Fetcher = (input, init) => fetch(input, init),
+): Promise<XhsNote> {
+  const { html } = await fetchPublicHtml(inputUrl, fetcher);
+  return parsePublicNoteHtml(html, commentLimit);
+}
+
+function previewValue(value: unknown): string {
+  try {
+    const raw = typeof value === "string" ? value : JSON.stringify(value);
+    if (!raw) return String(value);
+    return raw.length > 500 ? `${raw.slice(0, 500)}…` : raw;
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+export async function debugXhsNote(
+  inputUrl: string,
+  fetcher: Fetcher = (input, init) => fetch(input, init),
+): Promise<XhsDebugResult> {
+  const { html, finalUrl } = await fetchPublicHtml(inputUrl, fetcher);
+  const state = parseStateFromHtml(html);
+  const matches: XhsDebugEntry[] = [];
+  const seen = new Set<unknown>();
+  const interesting = /(image|img|url|file|attach|download|resource|document|media|cover)/i;
+
+  function visit(value: unknown, path: string[]): void {
+    if (matches.length >= 200) return;
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        if (index >= 20) break;
+        visit(value[index], [...path, `[${index}]`]);
+      }
+      return;
+    }
+
+    const obj = record(value)!;
+    for (const [key, child] of Object.entries(obj)) {
+      const nextPath = [...path, key];
+      if (interesting.test(key) || interesting.test(nextPath.join("."))) {
+        matches.push({
+          path: nextPath.join("."),
+          key,
+          preview: previewValue(child),
+        });
+        if (matches.length >= 200) return;
+      }
+      visit(child, nextPath);
+    }
+  }
+
+  visit(state, []);
+
+  const stateObj = record(state);
+  const noteData = record(nested(state, ["noteData", "data", "noteData"]));
+  const detailMap = record(nested(state, ["note", "noteDetailMap"]));
+
+  return {
+    finalUrl,
+    htmlLength: html.length,
+    stateTopLevelKeys: Object.keys(stateObj ?? {}).slice(0, 100),
+    noteDataKeys: Object.keys(noteData ?? {}).slice(0, 100),
+    detailMapKeys: Object.keys(detailMap ?? {}).slice(0, 100),
+    matches,
+  };
 }
