@@ -1,6 +1,4 @@
-export interface Env {
-  MCP_BEARER_TOKEN: string;
-}
+export interface Env {}
 
 export type McpHandler = (
   request: Request,
@@ -23,23 +21,6 @@ export function createWorker(mcpHandler: McpHandler): WorkerApp {
 
       if (url.pathname !== "/mcp") {
         return Response.json({ error: "Not found" }, { status: 404 });
-      }
-
-      if (!env.MCP_BEARER_TOKEN) {
-        return Response.json(
-          { error: "Server authentication is not configured" },
-          { status: 500 },
-        );
-      }
-
-      if (request.headers.get("authorization") !== `Bearer ${env.MCP_BEARER_TOKEN}`) {
-        return Response.json(
-          { error: "Unauthorized" },
-          {
-            status: 401,
-            headers: { "www-authenticate": "Bearer" },
-          },
-        );
       }
 
       return mcpHandler(request, env, ctx);
