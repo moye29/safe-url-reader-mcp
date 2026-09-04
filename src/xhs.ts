@@ -6,11 +6,19 @@ export interface XhsComment {
   likes: number;
 }
 
+export interface XhsAttachment {
+  name: string;
+  url?: string;
+  id?: string;
+  type?: string;
+}
+
 export interface XhsNote {
   title: string;
   content: string;
   author: string;
   images: string[];
+  attachments: XhsAttachment[];
   comments: XhsComment[];
 }
 
@@ -54,10 +62,121 @@ function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
-function normalizeImageUrl(value: unknown): string | undefined {
+function normalizeUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   if (value.startsWith("//")) return `https:${value}`;
   return value.startsWith("https://") ? value : undefined;
+}
+
+function collectHttpsUrls(value: unknown, result: string[] = []): string[] {
+  const normalized = normalizeUrl(value);
+  if (normalized) {
+    result.push(normalized);
+    return result;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectHttpsUrls(item, result);
+    return result;
+  }
+  const obj = record(value);
+  if (obj) {
+    for (const child of Object.values(obj)) collectHttpsUrls(child, result);
+  }
+  return result;
+}
+
+function unique<T>(items: T[]): T[] {
+  return [...new Set(items)];
+}
+
+function imageUrlsFromList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const urls: string[] = [];
+  for (const item of value) {
+    const image = record(item);
+    const preferred = normalizeUrl(
+      image?.urlDefault ?? image?.url ?? image?.urlPre ?? image?.traceId,
+    );
+    if (preferred) {
+      urls.push(preferred);
+      continue;
+    }
+    const nestedUrls = unique(collectHttpsUrls(item));
+    if (nestedUrls.length > 0) urls.push(nestedUrls[0]!);
+  }
+  return unique(urls);
+}
+
+function attachmentFromRecord(value: unknown): XhsAttachment | undefined {
+  const obj = record(value);
+  if (!obj) return undefined;
+
+  const name = text(
+    obj.fileName ?? obj.filename ?? obj.name ?? obj.title ?? obj.resourceName,
+  );
+  const type = text(obj.fileType ?? obj.type ?? obj.mimeType ?? obj.resourceType);
+  const id = text(obj.fileId ?? obj.id ?? obj.resourceId ?? obj.attachmentId);
+
+  const directUrl = normalizeUrl(
+    obj.downloadUrl ?? obj.fileUrl ?? obj.resourceUrl ?? obj.url,
+  );
+  const discoveredUrl = directUrl ?? unique(collectHttpsUrls(obj))[0];
+
+  const documentLike = /\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|md|epub|lua)(?:$|[?#])/i;
+  const looksLikeAttachment =
+    Boolean(name || id || type) &&
+    (Boolean(directUrl) || Boolean(id) || documentLike.test(discoveredUrl ?? ""));
+
+  if (!looksLikeAttachment) return undefined;
+
+  let finalName = name;
+  if (!finalName && discoveredUrl) {
+    try {
+      finalName = decodeURIComponent(new URL(discoveredUrl).pathname.split("/").pop() ?? "");
+    } catch {}
+  }
+
+  return {
+    name: finalName || "附件",
+    ...(discoveredUrl ? { url: discoveredUrl } : {}),
+    ...(id ? { id } : {}),
+    ...(type ? { type } : {}),
+  };
+}
+
+function findAttachments(root: unknown): XhsAttachment[] {
+  const found: XhsAttachment[] = [];
+  const seen = new Set<unknown>();
+
+  function visit(value: unknown, path: string[]): void {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, path);
+      return;
+    }
+
+    const obj = record(value)!;
+    const pathText = path.join(".").toLowerCase();
+    if (/(attachment|document|download|filelist|notefile|resource)/.test(pathText)) {
+      const candidate = attachmentFromRecord(obj);
+      if (candidate) found.push(candidate);
+    }
+
+    for (const [key, child] of Object.entries(obj)) {
+      visit(child, [...path, key]);
+    }
+  }
+
+  visit(root, []);
+
+  const deduped = new Map<string, XhsAttachment>();
+  for (const item of found) {
+    const key = item.url ?? item.id ?? `${item.name}|${item.type ?? ""}`;
+    if (!deduped.has(key)) deduped.set(key, item);
+  }
+  return [...deduped.values()].slice(0, 10);
 }
 
 function replaceUndefinedTokens(source: string): string {
@@ -111,19 +230,20 @@ export function parsePublicNoteHtml(html: string, _commentLimit: number): XhsNot
   const firstDetail = detailMap
     ? record(detailMap[Object.keys(detailMap)[0] ?? ""])
     : undefined;
-  const note =
-    record(nested(state, ["noteData", "data", "noteData"])) ??
-    record(firstDetail?.note);
+  const primaryNote = record(nested(state, ["noteData", "data", "noteData"]));
+  const detailNote = record(firstDetail?.note);
+  const note = primaryNote ?? detailNote;
   if (!note) throw new Error("公开页面中没有找到笔记数据");
 
-  const user = record(note.user);
-  const imageList = Array.isArray(note.imageList) ? note.imageList : [];
-  const images = imageList
-    .map((item) => {
-      const image = record(item);
-      return normalizeImageUrl(image?.url ?? image?.urlDefault ?? image?.urlPre);
-    })
-    .filter((url): url is string => Boolean(url));
+  const user = record(primaryNote?.user) ?? record(detailNote?.user) ?? record(note.user);
+
+  // Some XHS pages expose a lightweight noteData object and a richer noteDetailMap
+  // object at the same time. Merge image sources instead of picking only one branch.
+  const images = unique([
+    ...imageUrlsFromList(primaryNote?.imageList),
+    ...imageUrlsFromList(detailNote?.imageList),
+  ]);
+
   const directCommentData = record(
     nested(state, ["noteData", "data", "commentData"]),
   );
@@ -150,11 +270,14 @@ export function parsePublicNoteHtml(html: string, _commentLimit: number): XhsNot
     };
   });
 
+  const attachments = findAttachments(state);
+
   return {
-    title: text(note.title, "(无标题)"),
-    content: text(note.desc),
+    title: text(primaryNote?.title ?? detailNote?.title, "(无标题)"),
+    content: text(primaryNote?.desc ?? detailNote?.desc),
     author: text(user?.nickName ?? user?.nickname, "未知用户"),
     images,
+    attachments,
     comments,
   };
 }
