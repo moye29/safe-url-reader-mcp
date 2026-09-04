@@ -9,7 +9,12 @@ const attachmentSchema = z.object({
   name: z.string(),
   url: z.string().url().optional(),
   id: z.string().optional(),
+  docId: z.string().optional(),
   type: z.string().optional(),
+  icon: z.string().url().optional(),
+  pageCount: z.number().optional(),
+  viewCount: z.number().optional(),
+  downloadCount: z.number().optional(),
 });
 
 const noteOutputSchema = z.object({
@@ -44,7 +49,7 @@ async function fetchImageBlock(url: string) {
         accept: "image/*",
         referer: "https://www.xiaohongshu.com/",
         "user-agent":
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
       },
       signal: AbortSignal.timeout(10_000),
     });
@@ -68,7 +73,7 @@ async function fetchImageBlock(url: string) {
 function createServer(): McpServer {
   const server = new McpServer({
     name: "xhs-read-mcp",
-    version: "1.2.0",
+    version: "1.3.0",
   });
 
   server.registerTool(
@@ -76,7 +81,7 @@ function createServer(): McpServer {
     {
       title: "读取小红书公开笔记",
       description:
-        "读取 xhslink.com 短链或 xiaohongshu.com 普通笔记链接，返回标题、正文、作者、图片、公开页面可见附件信息，以及可选的最多 5 条公开页首屏评论。图片会尽量以内联图片内容返回给模型。只读，不登录，也不使用 Cookie。",
+        "读取 xhslink.com 短链或 xiaohongshu.com 普通笔记链接，返回标题、正文、作者、图片、公开页面可见附件元数据，以及可选的最多 5 条公开页首屏评论。图片会尽量以内联图片内容返回给模型。只读，不登录，也不使用 Cookie。",
       inputSchema: z.object({
         url: z.string().url().describe("小红书短链或普通笔记链接"),
         comments: z
