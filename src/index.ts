@@ -5,11 +5,19 @@ import { z } from "zod";
 import { createWorker } from "./worker";
 import { readXhsNote } from "./xhs";
 
+const attachmentSchema = z.object({
+  name: z.string(),
+  url: z.string().url().optional(),
+  id: z.string().optional(),
+  type: z.string().optional(),
+});
+
 const noteOutputSchema = z.object({
   title: z.string(),
   content: z.string(),
   author: z.string(),
   images: z.array(z.string().url()),
+  attachments: z.array(attachmentSchema),
   comments: z.array(
     z.object({
       author: z.string(),
@@ -19,10 +27,48 @@ const noteOutputSchema = z.object({
   ),
 });
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+async function fetchImageBlock(url: string) {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: "image/*",
+        referer: "https://www.xiaohongshu.com/",
+        "user-agent":
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return undefined;
+    const mimeType = response.headers.get("content-type")?.split(";")[0] ?? "image/jpeg";
+    if (!mimeType.startsWith("image/")) return undefined;
+
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength === 0 || buffer.byteLength > 3_000_000) return undefined;
+
+    return {
+      type: "image" as const,
+      data: arrayBufferToBase64(buffer),
+      mimeType,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function createServer(): McpServer {
   const server = new McpServer({
     name: "xhs-read-mcp",
-    version: "1.0.0",
+    version: "1.1.0",
   });
 
   server.registerTool(
@@ -30,7 +76,7 @@ function createServer(): McpServer {
     {
       title: "读取小红书公开笔记",
       description:
-        "读取 xhslink.com 短链或 xiaohongshu.com 普通笔记链接，返回标题、正文、作者、图片链接，以及可选的最多 5 条公开页首屏评论。只读，不登录，也不使用 Cookie。",
+        "读取 xhslink.com 短链或 xiaohongshu.com 普通笔记链接，返回标题、正文、作者、图片、公开页面可见附件信息，以及可选的最多 5 条公开页首屏评论。图片会尽量以内联图片内容返回给模型。只读，不登录，也不使用 Cookie。",
       inputSchema: z.object({
         url: z.string().url().describe("小红书短链或普通笔记链接"),
         comments: z
@@ -52,15 +98,22 @@ function createServer(): McpServer {
     async ({ url, comments }) => {
       try {
         const note = await readXhsNote(url, comments);
+        const imageBlocks = (
+          await Promise.all(note.images.slice(0, 9).map((imageUrl) => fetchImageBlock(imageUrl)))
+        ).filter((block): block is NonNullable<typeof block> => Boolean(block));
+
         return {
-          content: [{ type: "text", text: JSON.stringify(note, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(note, null, 2) },
+            ...imageBlocks,
+          ],
           structuredContent: note,
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "读取失败";
         return {
           isError: true,
-          content: [{ type: "text", text: message }],
+          content: [{ type: "text" as const, text: message }],
         };
       }
     },
