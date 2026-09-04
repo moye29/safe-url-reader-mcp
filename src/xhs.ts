@@ -10,7 +10,12 @@ export interface XhsAttachment {
   name: string;
   url?: string;
   id?: string;
+  docId?: string;
   type?: string;
+  icon?: string;
+  pageCount?: number;
+  viewCount?: number;
+  downloadCount?: number;
 }
 
 export interface XhsNote {
@@ -44,7 +49,7 @@ export type Fetcher = (
 
 const XHS_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36";
 
 function assertAllowedUrl(url: URL): void {
   const allowedHosts = new Set([
@@ -75,6 +80,11 @@ function nested(root: unknown, keys: string[]): unknown {
 
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 function normalizeUrl(value: unknown): string | undefined {
@@ -123,9 +133,47 @@ function imageUrlsFromList(value: unknown): string[] {
   return unique(urls);
 }
 
+function relatedFileAttachment(value: unknown): XhsAttachment | undefined {
+  const obj = record(value);
+  if (!obj) return undefined;
+
+  const name = text(obj.name ?? obj.fileName ?? obj.filename);
+  const docId = text(obj.docId);
+  const icon = normalizeUrl(obj.icon);
+  const type = name.includes(".") ? name.split(".").pop()?.toLowerCase() : undefined;
+
+  let pageCount: number | undefined;
+  let viewCount: number | undefined;
+  let downloadCount: number | undefined;
+  const bizExtraRaw = text(obj.bizExtra);
+  if (bizExtraRaw) {
+    try {
+      const extra = record(JSON.parse(bizExtraRaw));
+      pageCount = finiteNumber(extra?.page_num);
+      viewCount = finiteNumber(extra?.view_num);
+      downloadCount = finiteNumber(extra?.download_num);
+    } catch {}
+  }
+
+  if (!name && !docId) return undefined;
+
+  return {
+    name: name || "附件",
+    ...(docId ? { docId } : {}),
+    ...(type ? { type } : {}),
+    ...(icon ? { icon } : {}),
+    ...(pageCount !== undefined ? { pageCount } : {}),
+    ...(viewCount !== undefined ? { viewCount } : {}),
+    ...(downloadCount !== undefined ? { downloadCount } : {}),
+  };
+}
+
 function attachmentFromRecord(value: unknown): XhsAttachment | undefined {
   const obj = record(value);
   if (!obj) return undefined;
+
+  const explicitRelatedFile = relatedFileAttachment(obj);
+  if (obj.docId && explicitRelatedFile) return explicitRelatedFile;
 
   const name = text(
     obj.fileName ?? obj.filename ?? obj.name ?? obj.title ?? obj.resourceName,
@@ -175,7 +223,7 @@ function findAttachments(root: unknown): XhsAttachment[] {
 
     const obj = record(value)!;
     const pathText = path.join(".").toLowerCase();
-    if (/(attachment|document|download|filelist|notefile|resource)/.test(pathText)) {
+    if (/(relatedfile|attachment|document|download|filelist|notefile|resource)/.test(pathText)) {
       const candidate = attachmentFromRecord(obj);
       if (candidate) found.push(candidate);
     }
@@ -189,7 +237,7 @@ function findAttachments(root: unknown): XhsAttachment[] {
 
   const deduped = new Map<string, XhsAttachment>();
   for (const item of found) {
-    const key = item.url ?? item.id ?? `${item.name}|${item.type ?? ""}`;
+    const key = item.url ?? item.docId ?? item.id ?? `${item.name}|${item.type ?? ""}`;
     if (!deduped.has(key)) deduped.set(key, item);
   }
   return [...deduped.values()].slice(0, 10);
@@ -287,14 +335,25 @@ export function parsePublicNoteHtml(html: string, _commentLimit: number): XhsNot
     };
   });
 
-  const attachments = findAttachments(state);
+  const explicitRelatedFile = relatedFileAttachment(
+    detailNote?.relatedFile ?? primaryNote?.relatedFile,
+  );
+  const attachments = [
+    ...(explicitRelatedFile ? [explicitRelatedFile] : []),
+    ...findAttachments(state),
+  ];
+  const uniqueAttachments = new Map<string, XhsAttachment>();
+  for (const item of attachments) {
+    const key = item.url ?? item.docId ?? item.id ?? `${item.name}|${item.type ?? ""}`;
+    if (!uniqueAttachments.has(key)) uniqueAttachments.set(key, item);
+  }
 
   return {
     title: text(primaryNote?.title ?? detailNote?.title, "(无标题)"),
     content: text(primaryNote?.desc ?? detailNote?.desc),
     author: text(user?.nickName ?? user?.nickname, "未知用户"),
     images,
-    attachments,
+    attachments: [...uniqueAttachments.values()].slice(0, 10),
     comments,
   };
 }
