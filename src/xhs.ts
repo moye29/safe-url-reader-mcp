@@ -80,6 +80,7 @@ function text(value: unknown, fallback = ""): string {
 function normalizeUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   if (value.startsWith("//")) return `https:${value}`;
+  if (value.startsWith("http://")) return `https://${value.slice("http://".length)}`;
   return value.startsWith("https://") ? value : undefined;
 }
 
@@ -110,7 +111,7 @@ function imageUrlsFromList(value: unknown): string[] {
   for (const item of value) {
     const image = record(item);
     const preferred = normalizeUrl(
-      image?.urlDefault ?? image?.url ?? image?.urlPre ?? image?.traceId,
+      image?.urlSizeLarge ?? image?.urlDefault ?? image?.url ?? image?.urlPre ?? image?.traceId,
     );
     if (preferred) {
       urls.push(preferred);
@@ -249,6 +250,7 @@ export function parsePublicNoteHtml(html: string, _commentLimit: number): XhsNot
     : undefined;
   const primaryNote = record(nested(state, ["noteData", "data", "noteData"]));
   const detailNote = record(firstDetail?.note);
+  const preloadImages = nested(state, ["noteData", "normalNotePreloadData", "imagesList"]);
   const note = primaryNote ?? detailNote;
   if (!note) throw new Error("公开页面中没有找到笔记数据");
 
@@ -256,6 +258,7 @@ export function parsePublicNoteHtml(html: string, _commentLimit: number): XhsNot
   const images = unique([
     ...imageUrlsFromList(primaryNote?.imageList),
     ...imageUrlsFromList(detailNote?.imageList),
+    ...imageUrlsFromList(preloadImages),
   ]);
 
   const directCommentData = record(
