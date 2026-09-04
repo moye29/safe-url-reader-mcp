@@ -3,7 +3,7 @@ import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 
 import { createWorker } from "./worker";
-import { readXhsNote } from "./xhs";
+import { debugXhsNote, readXhsNote } from "./xhs";
 
 const attachmentSchema = z.object({
   name: z.string(),
@@ -68,7 +68,7 @@ async function fetchImageBlock(url: string) {
 function createServer(): McpServer {
   const server = new McpServer({
     name: "xhs-read-mcp",
-    version: "1.1.0",
+    version: "1.2.0",
   });
 
   server.registerTool(
@@ -111,6 +111,39 @@ function createServer(): McpServer {
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "读取失败";
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: message }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "debug_xhs_note",
+    {
+      title: "诊断小红书公开页面结构",
+      description:
+        "临时诊断工具：读取公开笔记页面，只返回与 image/img/url/file/attach/download/resource/document/media/cover 相关的字段路径和值预览，用于适配页面结构。只读，不登录，不使用 Cookie。",
+      inputSchema: z.object({
+        url: z.string().url().describe("需要诊断的小红书笔记链接"),
+      }),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ url }) => {
+      try {
+        const result = await debugXhsNote(url);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          structuredContent: result,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "诊断失败";
         return {
           isError: true,
           content: [{ type: "text" as const, text: message }],
