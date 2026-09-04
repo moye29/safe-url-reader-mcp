@@ -73,7 +73,7 @@ async function fetchImageBlock(url: string) {
 function createServer(): McpServer {
   const server = new McpServer({
     name: "xhs-read-mcp",
-    version: "1.3.0",
+    version: "1.3.1",
   });
 
   server.registerTool(
@@ -81,7 +81,7 @@ function createServer(): McpServer {
     {
       title: "读取小红书公开笔记",
       description:
-        "读取 xhslink.com 短链或 xiaohongshu.com 普通笔记链接，返回标题、正文、作者、图片、公开页面可见附件元数据，以及可选的最多 5 条公开页首屏评论。图片会尽量以内联图片内容返回给模型。只读，不登录，也不使用 Cookie。",
+        "默认用于读取用户分享的小红书链接。读取 xhslink.com 短链或 xiaohongshu.com 普通笔记链接，返回标题、正文、作者、图片、公开页面可见附件元数据，以及可选的最多 5 条公开页首屏评论。图片会尽量以内联图片内容返回给模型。只读，不登录，也不使用 Cookie。用户只提供或分享小红书链接时，应优先调用本工具。",
       inputSchema: z.object({
         url: z.string().url().describe("小红书短链或普通笔记链接"),
         comments: z
@@ -127,11 +127,11 @@ function createServer(): McpServer {
   server.registerTool(
     "debug_xhs_note",
     {
-      title: "诊断小红书公开页面结构",
+      title: "诊断小红书公开页面结构（仅开发调试）",
       description:
-        "临时诊断工具：读取公开笔记页面，只返回与 image/img/url/file/attach/download/resource/document/media/cover 相关的字段路径和值预览，用于适配页面结构。只读，不登录，不使用 Cookie。",
+        "仅用于开发调试页面结构。除非用户明确要求“诊断”“调试”“debug”或明确点名 debug_xhs_note，否则绝对不要调用本工具。尤其当用户只是分享/粘贴一个小红书链接、要求读取/总结/查看内容时，不要调用本工具，应调用 read_xhs_note。该工具会读取公开笔记页面并返回较多结构字段，仅用于排查页面改版；只读，不登录，不使用 Cookie。",
       inputSchema: z.object({
-        url: z.string().url().describe("需要诊断的小红书笔记链接"),
+        url: z.string().url().describe("仅在用户明确要求诊断/调试时传入的小红书笔记链接"),
       }),
       annotations: {
         readOnlyHint: true,
