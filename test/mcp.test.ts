@@ -3,12 +3,11 @@ import { describe, expect, it } from "vitest";
 import worker from "../src/index";
 
 describe("Streamable HTTP MCP endpoint", () => {
-  it("answers an authenticated initialize request at /mcp", async () => {
+  it("answers an initialize request at /mcp with the current server name", async () => {
     const response = await worker.fetch(
       new Request("https://worker.example/mcp", {
         method: "POST",
         headers: {
-          authorization: "Bearer secret",
           accept: "application/json, text/event-stream",
           "content-type": "application/json",
         },
@@ -23,20 +22,19 @@ describe("Streamable HTTP MCP endpoint", () => {
           },
         }),
       }),
-      { MCP_BEARER_TOKEN: "secret" },
+      {},
       {} as ExecutionContext,
     );
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("xhs-read-mcp");
+    expect(await response.text()).toContain("safe-url-reader-mcp");
   });
 
-  it("advertises only the read_xhs_note tool with comments capped at 5", async () => {
+  it("advertises the unified reader plus compatibility and debug tools", async () => {
     const response = await worker.fetch(
       new Request("https://worker.example/mcp", {
         method: "POST",
         headers: {
-          authorization: "Bearer secret",
           accept: "application/json, text/event-stream",
           "content-type": "application/json",
           "mcp-protocol-version": "2025-11-25",
@@ -48,7 +46,7 @@ describe("Streamable HTTP MCP endpoint", () => {
           params: {},
         }),
       }),
-      { MCP_BEARER_TOKEN: "secret" },
+      {},
       {} as ExecutionContext,
     );
     const responseText = await response.text();
@@ -61,21 +59,35 @@ describe("Streamable HTTP MCP endpoint", () => {
         tools: Array<{
           name: string;
           annotations: { readOnlyHint: boolean; destructiveHint: boolean };
-          inputSchema: { properties: { comments: { default: number; maximum: number } } };
+          inputSchema: { properties?: Record<string, { default?: number; maximum?: number }> };
         }>;
       };
     };
 
     expect(body).toHaveProperty("result");
-    expect(body.result.tools).toHaveLength(1);
-    expect(body.result.tools[0]?.name).toBe("read_xhs_note");
-    expect(body.result.tools[0]?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-    });
-    expect(body.result.tools[0]?.inputSchema.properties.comments).toMatchObject({
+    const names = body.result.tools.map((tool) => tool.name).sort();
+    expect(names).toEqual([
+      "debug_url",
+      "debug_xhs_note",
+      "read_url",
+      "read_xhs_note",
+    ]);
+
+    for (const tool of body.result.tools) {
+      expect(tool.annotations).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+      });
+    }
+
+    const readUrl = body.result.tools.find((tool) => tool.name === "read_url");
+    expect(readUrl?.inputSchema.properties?.comments).toMatchObject({
       default: 0,
       maximum: 5,
+    });
+    expect(readUrl?.inputSchema.properties?.max_chars).toMatchObject({
+      default: 20000,
+      maximum: 50000,
     });
   });
 });
