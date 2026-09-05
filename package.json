@@ -1,6 +1,6 @@
 {
-  "name": "xhs-read-mcp-worker",
-  "version": "1.0.0",
+  "name": "safe-url-reader-mcp-worker",
+  "version": "1.4.1",
   "private": true,
   "type": "module",
   "scripts": {
