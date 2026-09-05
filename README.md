@@ -5,8 +5,10 @@
 当前策略：
 
 - 小红书 `xiaohongshu.com` / `xhslink.com`：走专用匿名 SSR 解析，不登录、不使用 Cookie，不自动重试。
-- 其他公网 HTTP(S) URL：走轻量直接 GET + 正文提取，不执行 JavaScript，不发送 Cookie 或 Authorization。
-- 统一入口：`read_url`。
+- 其他公网 HTTP(S) URL：默认走轻量直接 GET + 正文提取，不执行 JavaScript，不发送 Cookie 或 Authorization。
+- `read_url` 永远不会自动升级到 Jina。
+- 只有用户明确要求使用 Jina / Jina Reader / Jina MCP 时，才使用 `read_url_with_jina`。
+- `read_url_with_jina` 会在服务端请求第三方 Jina 之前硬性拒绝 `xiaohongshu.com`、`xhslink.com` 及其所有子域名。
 - 诊断工具：`debug_url`（连接/超时）与 `debug_xhs_note`（小红书页面结构）。
 
 ## MCP 工具
@@ -19,6 +21,22 @@
 - `url`：公开 HTTP(S) URL
 - `comments`：仅小红书生效，默认 0，最多 5 条公开页首屏评论
 - `max_chars`：仅普通网页生效，默认 20000，最大 50000
+
+普通读取失败时不会自动调用 Jina。
+
+### `read_url_with_jina`
+仅显式调用的 Jina Reader fallback。
+
+只有当用户明确要求“使用 Jina”“用 Jina Reader / Jina MCP”或直接点名 `read_url_with_jina` 时才应调用。
+
+特性：
+
+- 不作为 `read_url` 的自动 fallback
+- 目标 URL 会发送给第三方 Jina Reader 服务
+- 不发送用户 Cookie 或登录态
+- 使用 `DNT: 1`
+- 小红书域名及其所有子域名在服务端请求 Jina 前直接拒绝
+- 默认最多返回 20000 字，最大 50000 字
 
 ### `read_xhs_note`
 保留的兼容工具。普通情况下优先使用 `read_url`。
@@ -55,6 +73,13 @@
 
 小红书额外采用低频、匿名、无 Cookie 的专用解析路径。
 
+Jina fallback 额外遵循：
+
+- 绝不自动调用
+- 小红书域名硬禁止
+- 不携带用户登录态
+- 只在用户明确指定时把目标 URL 交给第三方 Jina Reader
+
 ## 自动化测试与 CI
 
 运行：
@@ -66,10 +91,12 @@ npm run typecheck
 
 当前自动化测试覆盖：
 
-- 通用 HTML 正文读取与小红书域名识别
+- 通用 HTML 正文读取与小红书域名/子域名识别
 - localhost、私网、link-local、IPv6 loopback 等 SSRF 拦截
 - 重定向目标重新校验，避免跳转到受限地址
 - 5 MB 响应上限与不支持的 Content-Type 拒绝
+- Jina fallback 正常读取、正文截断
+- Jina 对小红书主域名及子域名在发出第三方请求前硬拒绝
 - `debug_url` 只检查响应信息、不读取最终正文
 - `debug_url` 重定向逐跳单次请求
 - 小红书 `debug_url` 不 retry、不切换 UA/协议
@@ -128,7 +155,8 @@ npm run deploy
 3. 不携带登录态
 4. 对高风控站点使用单独策略
 5. 对通用 URL 做必要 SSRF 与资源限制
-6. 页面无法安全、稳定读取时宁可失败，不自动升级到 Playwright、登录态或高频重试
+6. 页面无法安全、稳定读取时宁可失败，不自动升级到 Jina、Playwright、登录态或高频重试
+7. 如确实需要更强抓取能力，由用户显式选择 Jina fallback
 
 ## 小红书支持范围
 
@@ -149,6 +177,7 @@ npm run deploy
 - 自动抓评论分页
 - 使用 Playwright
 - 为了绕过限制进行高频重试
+- 将小红书 URL 发送给 Jina Reader
 
 ## 项目来源说明
 
