@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { debugUrlConnection } from "./debug";
 import { isXhsUrl, readGenericUrl } from "./generic";
+import { readUrlWithJina } from "./jina";
 import { createWorker } from "./worker";
 import { debugXhsNote, readXhsNote } from "./xhs";
 
@@ -90,7 +91,7 @@ async function xhsToolResult(url: string, comments: number) {
 function createServer(): McpServer {
   const server = new McpServer({
     name: "safe-url-reader-mcp",
-    version: "1.4.1",
+    version: "1.5.0",
   });
 
   server.registerTool(
@@ -98,7 +99,7 @@ function createServer(): McpServer {
     {
       title: "读取公开 URL",
       description:
-        "默认用于读取用户分享/粘贴的公开 HTTP(S) URL。服务端会自动按域名分流：xiaohongshu.com / xhslink.com 永远使用专用小红书匿名 SSR 解析，不登录、不使用 Cookie、不走通用抓取；其他公网 URL 使用轻量直接 GET + 正文提取，不执行 JavaScript、不发送 Cookie/Authorization。除非用户明确要求诊断，否则普通 URL 读取优先使用本工具。",
+        "默认用于读取用户分享/粘贴的公开 HTTP(S) URL。服务端会自动按域名分流：xiaohongshu.com / xhslink.com 永远使用专用小红书匿名 SSR 解析，不登录、不使用 Cookie、不走通用抓取；其他公网 URL 使用轻量直接 GET + 正文提取，不执行 JavaScript、不发送 Cookie/Authorization。本工具绝不会自动调用 Jina；即使普通读取失败，也只有用户明确要求使用 Jina 时才应改用 read_url_with_jina。除非用户明确要求诊断，否则普通 URL 读取优先使用本工具。",
       inputSchema: z.object({
         url: z.string().url().describe("需要读取的公开 HTTP(S) URL"),
         comments: z
@@ -136,6 +137,46 @@ function createServer(): McpServer {
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "读取失败";
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: message }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "read_url_with_jina",
+    {
+      title: "使用 Jina Reader 读取公开 URL（仅显式调用）",
+      description:
+        "仅当用户明确说“使用 Jina”“用 Jina Reader / Jina MCP”或明确点名 read_url_with_jina 时才调用。不得作为 read_url 失败后的自动 fallback，也不得因为普通网页读取失败而自行调用。服务端会在请求 Jina 之前硬性拒绝 xiaohongshu.com、xhslink.com 及其所有子域名，因此小红书 URL 永远不会发送给 Jina。该工具会把目标 URL 发送给第三方 Jina Reader 服务进行抓取和正文提取；不发送用户 Cookie 或登录态。",
+      inputSchema: z.object({
+        url: z.string().url().describe("明确指定要通过 Jina Reader 读取的非小红书 HTTP(S) URL"),
+        max_chars: z
+          .number()
+          .int()
+          .min(1000)
+          .max(50000)
+          .default(20000)
+          .describe("最多返回的正文字数，默认 20000，最大 50000"),
+      }),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ url, max_chars }) => {
+      try {
+        const result = await readUrlWithJina(url, max_chars);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          structuredContent: result,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Jina Reader 读取失败";
         return {
           isError: true,
           content: [{ type: "text" as const, text: message }],
