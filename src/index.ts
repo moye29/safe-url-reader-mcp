@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 
+import { debugUrlConnection } from "./debug";
 import { isXhsUrl, readGenericUrl } from "./generic";
 import { createWorker } from "./worker";
 import { debugXhsNote, readXhsNote } from "./xhs";
@@ -89,7 +90,7 @@ async function xhsToolResult(url: string, comments: number) {
 function createServer(): McpServer {
   const server = new McpServer({
     name: "safe-url-reader-mcp",
-    version: "1.4.0",
+    version: "1.4.1",
   });
 
   server.registerTool(
@@ -144,6 +145,39 @@ function createServer(): McpServer {
   );
 
   server.registerTool(
+    "debug_url",
+    {
+      title: "诊断 URL 连接与超时（仅开发调试）",
+      description:
+        "仅用于诊断网络连接、超时、HTTP 状态和重定向链。只有当用户明确要求诊断/debug，并且问题属于 timeout、403/429/5xx、重定向或页面完全拿不到时才调用。若小红书页面已经能打开但正文/图片/附件字段异常，应改用 debug_xhs_note。对 xiaohongshu.com / xhslink.com 本工具采用更保守策略：每个重定向跳转只发 1 次 GET，不自动重试，不尝试其他 UA/协议，不下载最终正文，只记录响应头和耗时，避免为了诊断增加不必要请求。普通读取不要调用本工具，应使用 read_url。",
+      inputSchema: z.object({
+        url: z.string().url().describe("需要诊断连接/超时问题的公开 HTTP(S) URL"),
+      }),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ url }) => {
+      try {
+        const result = await debugUrlConnection(url);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          structuredContent: result,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "连接诊断失败";
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: message }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
     "read_xhs_note",
     {
       title: "读取小红书公开笔记（兼容工具）",
@@ -183,11 +217,11 @@ function createServer(): McpServer {
   server.registerTool(
     "debug_xhs_note",
     {
-      title: "诊断小红书公开页面结构（仅开发调试）",
+      title: "诊断小红书页面内容结构（仅开发调试）",
       description:
-        "仅用于开发调试页面结构。除非用户明确要求“诊断”“调试”“debug”或明确点名 debug_xhs_note，否则绝对不要调用本工具。尤其当用户只是分享/粘贴 URL、要求读取/总结/查看内容时，不要调用本工具，应调用 read_url。该工具会返回较多结构字段，仅用于排查小红书页面改版；只读，不登录，不使用 Cookie。",
+        "仅用于诊断小红书页面内容结构变化，例如正文、图片、附件或 SSR 字段缺失/位置变化。只有当用户明确要求诊断/debug，且小红书页面已经能够成功连接但内容解析异常时才调用。若问题是 timeout、403/429/5xx、重定向或页面完全拿不到，应先用 debug_url。普通读取不要调用本工具，应使用 read_url。该工具会返回较多页面结构字段；只读，不登录，不使用 Cookie。",
       inputSchema: z.object({
-        url: z.string().url().describe("仅在用户明确要求诊断/调试时传入的小红书笔记链接"),
+        url: z.string().url().describe("仅在小红书页面内容结构异常时传入的笔记链接"),
       }),
       annotations: {
         readOnlyHint: true,
