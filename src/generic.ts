@@ -19,16 +19,14 @@ const MAX_BODY_BYTES = 5 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 15_000;
 
-const XHS_HOSTS = new Set([
-  "xhslink.com",
-  "www.xhslink.com",
-  "xiaohongshu.com",
-  "www.xiaohongshu.com",
-]);
+function isSameOrSubdomain(hostname: string, baseDomain: string): boolean {
+  return hostname === baseDomain || hostname.endsWith(`.${baseDomain}`);
+}
 
 export function isXhsUrl(inputUrl: string): boolean {
   try {
-    return XHS_HOSTS.has(new URL(inputUrl).hostname.toLowerCase());
+    const host = new URL(inputUrl).hostname.toLowerCase().replace(/\.$/, "");
+    return isSameOrSubdomain(host, "xiaohongshu.com") || isSameOrSubdomain(host, "xhslink.com");
   } catch {
     return false;
   }
