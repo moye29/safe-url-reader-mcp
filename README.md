@@ -31,7 +31,8 @@
 - 不自动 retry
 - 不尝试切换 UA
 - 不自动切换 HTTP/HTTPS
-- 只记录请求链与响应信息，不额外抓取正文
+- 每个重定向节点只请求一次
+- 只记录请求链与响应头信息，不额外抓取正文
 
 ### `debug_xhs_note`
 仅在用户明确要求诊断小红书页面结构时使用，用于排查正文、图片、附件等 SSR 字段变化。
@@ -41,11 +42,11 @@
 通用 URL Reader 包含以下限制：
 
 - 只允许 HTTP / HTTPS
-- 拒绝 localhost、私网 IP、link-local、云 metadata、保留地址
+- 拒绝 localhost、常见私网 IP、link-local、云 metadata、保留地址
 - 每次重定向都重新校验目标 URL
 - 最多 5 次重定向
 - 普通网页请求默认 15 秒超时
-- 最大响应体 5 MB
+- 最大响应体 5 MB，并在流式读取过程中执行上限
 - 仅读取 HTML、XHTML、纯文本和 JSON
 - 不支持 POST / PUT / DELETE
 - 不发送 Cookie
@@ -54,21 +55,54 @@
 
 小红书额外采用低频、匿名、无 Cookie 的专用解析路径。
 
-## Cloudflare Worker
+## 自动化测试与 CI
+
+运行：
+
+```bash
+npm test
+npm run typecheck
+```
+
+当前自动化测试覆盖：
+
+- 通用 HTML 正文读取与小红书域名识别
+- localhost、私网、link-local、IPv6 loopback 等 SSRF 拦截
+- 重定向目标重新校验，避免跳转到受限地址
+- 5 MB 响应上限与不支持的 Content-Type 拒绝
+- `debug_url` 只检查响应信息、不读取最终正文
+- `debug_url` 重定向逐跳单次请求
+- 小红书 `debug_url` 不 retry、不切换 UA/协议
+- 小红书 SSR 数据、图片等原有解析能力
+- MCP 工具列表与 Worker `/mcp` 边界行为
+
+GitHub Actions 会在 `main` push 和 Pull Request 时自动执行：
+
+```text
+npm ci
+npm test
+npm run typecheck
+```
+
+## Cloudflare Worker 与命名兼容
+
+GitHub 仓库及 npm package 已统一为 `safe-url-reader-mcp` / `safe-url-reader-mcp-worker`。
+
+`wrangler.jsonc` 中当前线上 Worker 名仍有意保留为：
+
+```text
+xhs-read-mcp
+```
+
+这是为了保持现有 `workers.dev` 地址和已配置的 MCP 客户端兼容。只改 GitHub 仓库名不需要修改 ChatGPT 中现有的服务器 URL。
+
+`package-lock.json` 应与 `package.json` 的 package 名称和版本保持同步；它不决定 Cloudflare Worker 地址。
 
 MCP 端点固定为：
 
 ```text
 /mcp
 ```
-
-当前线上 Worker 名仍保留为：
-
-```text
-xhs-read-mcp
-```
-
-这是为了保持现有线上地址兼容，不建议仅因 GitHub 仓库改名而修改 Worker 名。当前已连接的 ChatGPT MCP URL 因此无需变更。
 
 ## 本地开发
 
