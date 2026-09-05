@@ -30,7 +30,7 @@ describe("Streamable HTTP MCP endpoint", () => {
     expect(await response.text()).toContain("safe-url-reader-mcp");
   });
 
-  it("advertises the unified reader plus compatibility and debug tools", async () => {
+  it("advertises the unified reader, explicit Jina fallback, compatibility and debug tools", async () => {
     const response = await worker.fetch(
       new Request("https://worker.example/mcp", {
         method: "POST",
@@ -70,6 +70,7 @@ describe("Streamable HTTP MCP endpoint", () => {
       "debug_url",
       "debug_xhs_note",
       "read_url",
+      "read_url_with_jina",
       "read_xhs_note",
     ]);
 
@@ -86,6 +87,12 @@ describe("Streamable HTTP MCP endpoint", () => {
       maximum: 5,
     });
     expect(readUrl?.inputSchema.properties?.max_chars).toMatchObject({
+      default: 20000,
+      maximum: 50000,
+    });
+
+    const jina = body.result.tools.find((tool) => tool.name === "read_url_with_jina");
+    expect(jina?.inputSchema.properties?.max_chars).toMatchObject({
       default: 20000,
       maximum: 50000,
     });
