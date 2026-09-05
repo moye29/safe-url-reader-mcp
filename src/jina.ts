@@ -12,6 +12,44 @@ const JINA_READER_BASE = "https://r.jina.ai/";
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 
+function parseIpv4(hostname: string): number[] | undefined {
+  const parts = hostname.split(".");
+  if (parts.length !== 4) return undefined;
+  const nums = parts.map((part) => Number(part));
+  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return undefined;
+  return nums;
+}
+
+function isBlockedIpv4(parts: number[]): boolean {
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 0) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  );
+}
+
+function isBlockedIpv6(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host.includes(":")) return false;
+  return (
+    host === "::" ||
+    host === "::1" ||
+    host.startsWith("fc") ||
+    host.startsWith("fd") ||
+    /^fe[89ab]/.test(host) ||
+    host.startsWith("ff") ||
+    host.startsWith("2001:db8:")
+  );
+}
+
 function assertAllowedTarget(inputUrl: string): URL {
   let url: URL;
   try {
@@ -33,13 +71,14 @@ function assertAllowedTarget(inputUrl: string): URL {
     host === "localhost" ||
     host.endsWith(".localhost") ||
     host.endsWith(".local") ||
-    host === "metadata.google.internal" ||
-    host === "127.0.0.1" ||
-    host === "0.0.0.0" ||
-    host === "::1" ||
-    host === "169.254.169.254"
+    host === "metadata.google.internal"
   ) {
     throw new Error("出于安全原因，不能通过 Jina 读取本机、内网或云元数据地址");
+  }
+
+  const ipv4 = parseIpv4(host);
+  if ((ipv4 && isBlockedIpv4(ipv4)) || isBlockedIpv6(host)) {
+    throw new Error("出于安全原因，不能通过 Jina 读取本机、内网或保留 IP 地址");
   }
 
   return url;
